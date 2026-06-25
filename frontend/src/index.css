@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Design tokens (from CLAUDE.md "calm control room" system).
+   In Tailwind v4 these @theme variables generate utilities automatically:
+   --color-bg -> bg-bg / text-bg, --font-display -> font-display,
+   --radius-panel -> rounded-panel, etc. Define once, derive everything. */
+@theme {
+  /* Base palette — low-chroma control-room ground */
+  --color-bg: #0f1115;
+  --color-surface: #171a21;
+  --color-surface-2: #1f232c;
+  --color-border: #2a2f3a;
+  --color-text: #e7eaef;
+  --color-text-muted: #9aa3b2;
+  --color-accent: #6e8bff;
+
+  /* Category / state accents — color encodes meaning, not decoration */
+  --color-cat-positive: #3fb6a8;
+  --color-cat-question: #6e8bff;
+  --color-cat-brand: #c9a24b;
+  --color-cat-criticism: #d98a3d;
+  --color-cat-sensitive: #e0566b;
+  --color-cat-spam: #6b7280;
+  --color-cat-other: #8a93a3;
+
+  /* Type pairing — display / body / data */
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Shape */
+  --radius-panel: 8px;
+  --radius-control: 6px;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Quality floor: respect users who ask for less motion */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

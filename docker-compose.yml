@@ -1,0 +1,18 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: social_media_agent_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: comment_agent
+    ports:
+      # Host 5433 -> container 5432. Host 5432 is taken by a native Windows
+      # Postgres install, so we map this project's DB to 5433 to avoid the clash.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data # what makes the data persist across restarts
+
+volumes:
+  pgdata:
