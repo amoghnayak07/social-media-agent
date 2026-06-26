@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.models import PlatformKind
 from app.security.passwords import MIN_PASSWORD_LENGTH
 
 # bcrypt only hashes the first 72 bytes; cap here so behaviour is predictable.
@@ -65,3 +66,16 @@ class LlmCredentialResponse(BaseModel):
     key_hint: str  # masked only — never the plaintext key
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+# --- Platform accounts ---------------------------------------------------------
+class PlatformAccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    platform: PlatformKind
+    platform_account_id: str  # native channel id
+    status: str  # connected | needs_reauth
+    token_expires_at: datetime.datetime | None
+    created_at: datetime.datetime
+    # Encrypted tokens are never serialized — not declared here.

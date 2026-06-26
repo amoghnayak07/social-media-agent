@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # YouTube OAuth (server-side only; wired up in Phase 3).
     YOUTUBE_CLIENT_ID: str = ""
     YOUTUBE_CLIENT_SECRET: str = ""
+    # Must EXACTLY match an authorized redirect URI registered on the Google
+    # Cloud OAuth client (and is sent on both the auth request and token exchange).
+    YOUTUBE_REDIRECT_URI: str = "http://localhost:8000/api/platform/youtube/callback"
 
     model_config = SettingsConfigDict(
         env_file=".env",

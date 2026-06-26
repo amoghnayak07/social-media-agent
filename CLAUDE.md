@@ -80,7 +80,7 @@ All tables use a surrogate primary key (UUID or bigserial) and `created_at` / `u
 - **llm_credentials** — belongs to a creator. Chosen provider, chosen model, encrypted API key. Support rotate and hard-delete.
 - **posts** — belongs to a platform_account. Platform-neutral fields + platform-native post id.
 - **comments** — belongs to a post. Author, text, timestamp, platform-native comment id, `is_reply` (top-level vs reply), `authored_by_creator` (the creator's own replies are voice data), and the classification fields `category` and `confidence` (these MUST travel with the comment into the autonomy gate).
-- **voice_examples** — belongs to a platform_account (voice is per-platform). Stores (parent comment text → creator reply text) pairs, tagged by category, with an `embedding` vector column (pgvector) for semantic retrieval. **These are their own rows (a denormalized copy of text + embedding), not foreign keys into `comments`**, because the voice store has a different lifecycle (rebuilt on refresh) than the live comment feed. Populated by the refresh-memory job; read by the drafting step.
+- **voice_examples** — belongs to a platform_account (voice is per-platform). Stores (parent comment text → creator reply text) pairs, tagged by category, with an `embedding` vector column (pgvector) for semantic retrieval. **These are their own rows (a denormalized copy of text + embedding), not foreign keys into `comments`**, because the voice store has a different lifecycle (rebuilt on refresh) than the live comment feed. Populated by the refresh-voice job (learns from the creator's last N posts); read by the drafting step.
 - **category_policies** — belongs to a creator (per platform). One row per category: `action` (reply / hide / like / ignore / flag), `autonomy` (auto_send / draft / notify_only), optional `tone_constraint` text. The autonomy gate reads this on every write decision.
 - **actions** — the approval queue AND the audit log AND the idempotency guard, in one table. One row per proposed/executed action: which comment, the **original drafted text** and the **final sent text** as separate fields (the creator's edits never overwrite the original draft — the delta is voice-correction signal), routing category, autonomy decision, status (pending / approved / sent / rejected / auto_sent / uncertain), timestamps, approver. A unique constraint prevents the same comment being actioned twice.
 
@@ -228,7 +228,11 @@ Notes: `embedding` dimension must match whatever embedding model the voice pipel
 
 ### Voice pipeline (separate from the live loop)
 
-A "Refresh memory (past year)" button calls an endpoint that kicks off an **async** job: pull the last year's comments + the creator's replies, classify the parent comments, pair them into (comment → reply) examples tagged by category, embed them, write to `voice_examples`. Must be: async (button starts job, UI shows progress), idempotent (re-running does not duplicate), and incremental-friendly (later refreshes pull only new comments since last run). On Render's free tier there is no always-on worker, so implement as a FastAPI background task and CHUNK the work so no single request runs long enough to be killed. (A real task queue is explicitly v2.)
+A "Refresh voice" button (with an **N selector**) calls an endpoint that kicks off an **async** job: learn the creator's voice from their **last N posts** — N is user-defined with a sensible default (~20) and a capped maximum. Pull the comments + the creator's own replies from those N most recent posts, classify the parent comments, pair them into (comment → reply) examples tagged by category, embed them, write to `voice_examples`. Must be: async (button starts job, UI shows progress), idempotent (re-running does not duplicate), and incremental-friendly (a later refresh pulls only **posts newer than the most-recently-ingested post** — a clean cursor). On Render's free tier there is no always-on worker, so implement as a FastAPI background task and process **post-by-post** (the natural chunk boundary) so no single request runs long enough to be killed. (A real task queue is explicitly v2.)
+
+**Why last-N-posts, not a time window:** last-N is bounded and predictable — a "past year" window could be 40 posts or 4,000, which is unsafe to size and chunk on the free tier. The N most recent posts are inherently recent, so it still captures *current* voice, and it's a control the creator understands and can tune.
+
+**Two constraints:** (1) **Cap N** so a user can't set it high enough to blow past the Render request timeout or burn excessive YouTube read quota. (2) N bounds the number of **posts only** — a single viral post can still have tens of thousands of comments, so per-post pagination/chunking is still required; the implementation must NOT assume "N posts" means a small total.
 
 ---
 
@@ -266,8 +270,8 @@ Posts & comments  (Phase 3 / 5)
   GET    /api/posts/{id}/buckets           category counts + sample comments for the bucket view
 
 Voice  (Phase 6)
-  POST   /api/voice/refresh                start async refresh job {timeframe:'past_year'} -> {job_id}
-  GET    /api/voice/refresh/{job_id}       job status/progress (ingested/total/skipped)
+  POST   /api/voice/refresh                start async refresh job {num_posts:int} (capped) -> {job_id}
+  GET    /api/voice/refresh/{job_id}       job status/progress (posts done/total, examples ingested, skipped)
   GET    /api/voice/examples               list stored examples (filter by ?category=)
 
 Policies  (Phase 8)
@@ -491,12 +495,13 @@ Each phase ends with a checkpoint. Do not start a phase until the previous check
 - Apply graceful degradation: an unparseable or low-confidence LLM result falls back to `other` / conservative routing — never a crash, never a confident wrong label.
 - **Checkpoint:** run the classifier on a real post's comments; buckets and confidence look sensible; the bucket view renders them; feed it a deliberately malformed/empty response and confirm it degrades to the safe path instead of crashing. This is demoable on its own with zero write scopes.
 
-### Phase 6 — Voice store & refresh-memory pipeline
+### Phase 6 — Voice store & refresh-voice pipeline
 
-- Implement the async "Refresh memory (past year)" endpoint + background task: pull last year's comments + creator replies, classify parents, pair into (comment → reply) examples, embed, write to `voice_examples`. Idempotent, chunked, incremental-friendly. Curate: prefer recent and higher-engagement replies; filter very short/low-effort ones.
-- Frontend: a settings page with the refresh button and a progress indicator.
-- Apply the partial-failure policy: chunked and resumable (a failed chunk loses no completed work), skip-and-log bad records, idempotent re-runs, honest progress/status reporting.
-- **Checkpoint:** clicking refresh populates `voice_examples` with embeddings; re-running does not duplicate; pgvector similarity query returns same-category examples for a sample comment; killing the job mid-run and restarting resumes without duplicating or losing completed work.
+- Implement the async "Refresh voice" endpoint + background task: take `num_posts` (N, capped), pull the comments + creator replies from the creator's **last N posts**, classify parents, pair into (comment → reply) examples, embed, write to `voice_examples`. Idempotent, resumable, incremental-friendly. Curate: prefer recent and higher-engagement replies; filter very short/low-effort ones.
+- **Chunk post-by-post** (the natural boundary). Incremental refresh = pull only posts newer than the most-recently-ingested post (a clean cursor). Cap N so a run can't exceed the Render timeout or burn excessive YouTube read quota. N bounds the number of **posts only** — a single viral post can have tens of thousands of comments, so per-post pagination/chunking is still required; do NOT assume "N posts" means a small total.
+- Frontend: a settings page with the "Refresh voice" button, an **N selector**, and a progress indicator.
+- Apply the partial-failure policy: chunked and resumable (a failed post loses no completed work — resume from the cursor), skip-and-log bad records, idempotent re-runs, honest progress (posts done/total, examples ingested, skipped).
+- **Checkpoint:** clicking "Refresh voice" with a chosen N populates `voice_examples` with embeddings; re-running does not duplicate; pgvector similarity query returns same-category examples for a sample comment; killing the job mid-run and restarting resumes from the post cursor without duplicating or losing completed work.
 
 ### Phase 7 — Draft generation (voice-aware, draft-only)
 

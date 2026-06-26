@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.errors import register_exception_handlers
 from app.logging_config import setup_logging
-from app.routers import auth, llm_credentials
+from app.routers import auth, llm_credentials, platform_accounts, youtube
 
 settings = get_settings()
 
@@ -42,6 +42,8 @@ register_exception_handlers(app)
 # Routes.
 app.include_router(auth.router)
 app.include_router(llm_credentials.router)
+app.include_router(youtube.router)
+app.include_router(platform_accounts.router)
 
 
 @app.get("/health")
