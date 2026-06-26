@@ -6,6 +6,7 @@ uvicorn[standard]==0.34.0
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
+pgvector==0.3.6  # SQLAlchemy Vector type for voice_examples.embedding
 
 # --- Config & validation ---
 pydantic==2.10.4
